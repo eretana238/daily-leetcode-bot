@@ -2,4 +2,6 @@
 token.txt
 
 # directories
-bot-env/
+.vscode/
+__pycache__/
+venv/
