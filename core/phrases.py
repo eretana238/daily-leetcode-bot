@@ -1,7 +1,8 @@
+import random
+
 '''
 Constants
 '''
-
 PREFIX = 'lc'
 HOSTILE_RESPONSE = ['No u'
                     ,'I envy people who haven\'t met you',
@@ -16,3 +17,6 @@ HOSTILE_RESPONSE = ['No u'
                     'I\'d give you a nasty look, but you\'ve already got one',
                     'Honestly you kinda sus',
                     'I find the fact that you\'ve lasted in CS this long both surprising and disappointing']
+
+def hostile_response():
+    return HOSTILE_RESPONSE[random.randint(0, len(HOSTILE_RESPONSE)-1)]
