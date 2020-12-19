@@ -8,6 +8,7 @@ import time
 from core import phrases
 
 client = discord.Client()
+threading.Thread(target=client)
 stop_threads = False
 
 @client.event
@@ -22,6 +23,7 @@ async def on_message(message):
     global stop_threads
     if message.author == client.user:
         return
+
     if message.content.startswith(phrases.PREFIX):
         msg = message.content.replace(phrases.PREFIX, '')
         args = msg.strip().split(' ')
@@ -34,9 +36,10 @@ async def on_message(message):
             elif args[1] == 'random':
                 t = parse_time(args[2])
                 r = threading.Thread(target=await start_random(t, message))
-        
+   
         elif args[0] == 'stop' and len(args) == 1:
             stop_threads = True
+            
         else:
             await message.channel.send(phrases.hostile_response())
 
@@ -71,9 +74,9 @@ async def start_random(t, message):
 async def choose_problem(message, level):
     problem = random_problem(level)
     difficulty = 'easy'
-    if problem['difficulty'] == 2:
+    if level == 2:
         difficulty = 'medium'
-    elif problem['difficulty'] == 3:
+    elif level == 3:
         difficulty = 'hard'
     embedVar = discord.Embed(title=problem['stat']['question__title'], url="https://leetcode.com/problems/" + problem['stat']['question__title_slug'], description='Leetcode #' + str(problem['stat']['question_id']), color=0x00ff00)
     embedVar.add_field(name="Difficulty", value=difficulty, inline=True)
