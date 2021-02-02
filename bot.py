@@ -1,90 +1,187 @@
-import random
+import asyncio
 import discord
+from discord.ext import commands
+from dotenv import load_dotenv
+import json
+import os
+from random import randint
 import requests
-import re
-import threading
+from requests.exceptions import HTTPError
 import time
 
-from core import phrases
+import constants
 
-client = discord.Client()
-threading.Thread(target=client)
-stop_threads = False
+bot = commands.Bot(command_prefix='lc ')
 
-@client.event
+info = list()
+t = ''
+stop_posting = False
+
+
+@bot.event
 async def on_ready():
     global info
     res = requests.get('https://leetcode.com/api/problems/algorithms/')
     info = res.json()['stat_status_pairs']
     print('Ready')
 
-@client.event
+
+@bot.command()
+async def stop(ctx):
+    if 'daily_post_time' not in db.keys():
+        await ctx.send('Mmmm...there\'s nothing to stop')
+        return
+    global stop_posting
+    stop_posting = True
+
+
+@bot.command()
+async def reset(ctx):
+    if 'daily_post_time' not in db.keys():
+        await ctx.send('There\'s nothing to reset')
+        return
+    global stop_posting
+    stop_posting = True
+    del db['daily_post_time']
+
+
+@bot.command()
+async def resume(ctx):
+    if 'daily_post_time' not in db.keys():
+        await ctx.send('There\'s no daily posting to resume. Use an **lc start** command instead')
+        return
+    await ctx.send('Resumed daily posting!')
+    await ctx.invoke(bot.get_command('start random'))
+
+
+@bot.group()
+async def start(ctx):
+    if ctx.invoked_subcommand is None:
+        await ctx.send('Invalid start command. Example command **lc start random**')
+
+
+@start.command()
+async def random(ctx, t='12:00'):
+    global stop_posting
+    stop_posting = False
+    if t is not None:
+        print('starting to post problems')
+        if 'daily_post_time' not in db.keys():
+            db['daily_post_time'] = t
+        while not stop_posting:
+            await start_random(parse_time(db['daily_post_time']), ctx)
+
+
+@bot.event
 async def on_message(message):
-    global stop_threads
-    if message.author == client.user:
+    if message.author == bot.user:
         return
 
-    if message.content.startswith(phrases.PREFIX):
-        msg = message.content.replace(phrases.PREFIX, '')
-        args = msg.strip().split(' ')
-        # checks if argument is empty
-        if re.search('^\s*$', args[0]):
-            await invalid_args_msg(message)
-        elif args[0] == 'start':
-            if len(args) != 3:
-                await invalid_args_msg(message)
-            elif args[1] == 'random':
-                t = parse_time(args[2])
-                r = threading.Thread(target=await start_random(t, message))
-   
-        elif args[0] == 'stop' and len(args) == 1:
-            stop_threads = True
-            
+    if message.content.startswith(constants.PREFIX):
+        args = message.content.split(' ')
+        if args[1].lower() == 'start' or args[1].lower() == 'stop' or args[1].lower() == 'reset' or args[1].lower() == 'resume':
+            await bot.process_commands(message)
         else:
-            await message.channel.send(phrases.hostile_response())
+            await message.channel.send(hostile_response())
 
-async def invalid_args_msg(message):
-    await message.channel.send('Invalid amount of arguments. Try again you weeb')
-    
-def parse_time(time):
-    if ':' not in time:
+
+def parse_time(t):
+    if ':' not in t:
         return None
-    t = time.split(':')
-    return (int(t[0]) + 7) % 24, int(t[1])
+    ti = t.split(':')
+    return (int(ti[0]) + 7) % 24, int(ti[1])
+
 
 def random_problem(level):
     while True:
-        problem = info[random.randint(0, len(info)-1)]
+        problem = info[randint(0, len(info) - 1)]
         if not problem['paid_only'] and problem['difficulty']['level'] == level:
             return problem
-        
+
 
 async def start_random(t, message):
-    global stop_threads
-    while not stop_threads:
+    global stop_posting
+    while not stop_posting:
         gm_time = time.gmtime()
-        if t[0] == gm_time[3] and t[1] == gm_time[4]:
-            await message.channel.send('Grind time!')
-            await choose_problem(message,1)
-            await choose_problem(message,2)
-            await choose_problem(message,3)
-        time.sleep(60)
-    stop_threads = False
+        if t[0] == gm_time[3] and t[1] == gm_time[4] and gm_time[5] == 0:
+            await message.channel.send('Daily coding practice %d!' % db['problem_counter'])
+            await choose_problem(message, 1)
+            await choose_problem(message, 2)
+            await choose_problem(message, 3)
+            db['problem_counter'] += 1
+        await asyncio.sleep(1)
+    print('stopped daily posting')
+    await message.channel.send('Stopped daily posting!')
+
+
+def get_problem_counter():
+    if 'daily_counter' in db.keys():
+        counter = int(db['daily_counter'])
+        counter += 1
+        db['daily_counter'] = counter
+
 
 async def choose_problem(message, level):
-    problem = random_problem(level)
-    difficulty = 'easy'
-    if level == 2:
-        difficulty = 'medium'
-    elif level == 3:
-        difficulty = 'hard'
-    embedVar = discord.Embed(title=problem['stat']['question__title'], url="https://leetcode.com/problems/" + problem['stat']['question__title_slug'], description='Leetcode #' + str(problem['stat']['question_id']), color=0x00ff00)
-    embedVar.add_field(name="Difficulty", value=difficulty, inline=True)
-    embedVar.add_field(name="Paid only?", value=problem['paid_only'], inline=True)
-    embedVar.add_field(name="Total submitted", value=problem['stat']['total_submitted'], inline=True)
-    embedVar.set_footer(text="Lonely boy studios")
-    await message.channel.send(embed=embedVar)
+    while True:
+        problem = random_problem(level)
+        ql_res = get_quest_info(problem['stat']['question__title_slug'])
+        if ql_res.get('likes') > (ql_res.get('dislikes') * 2):
+            embedVar = discord.Embed(title=ql_res.get('title'),
+                                     type="rich",
+                                     url="https://leetcode.com/problems/" +
+                                     ql_res.get('titleSlug'),
+                                     description='Leetcode #' +
+                                     str(ql_res.get('questionFrontendId')),
+                                     color=0xfcba03)
+            embedVar.add_field(name="Difficulty",
+                               value=ql_res.get('difficulty'),
+                               inline=True)
+            embedVar.add_field(name="Paid only?",
+                               value=ql_res.get('isPaidOnly'),
+                               inline=True)
+            embedVar.add_field(name="Total submitted",
+                               value=problem['stat']['total_submitted'],
+                               inline=True)
+            embedVar.add_field(name="Likes",
+                               value=ql_res.get('likes'),
+                               inline=True)
+            embedVar.add_field(name="Dislikes",
+                               value=ql_res.get('dislikes'),
+                               inline=True)
+            embedVar.set_footer(text="Lonely boy studios")
+            await message.channel.send(embed=embedVar)
+            break
 
-with open('token.txt', 'r') as f:
-    token = f.readline()
-    client.run(token)
+
+def get_quest_info(slug):
+    query = """
+    query questionData($titleSlug: String!) {\n  question(titleSlug: $titleSlug) {\n    questionId\n    questionFrontendId\n    boundTopicId\n    title\n    titleSlug\n    content\n    translatedTitle\n    translatedContent\n    isPaidOnly\n    difficulty\n    likes\n    dislikes\n    isLiked\n    similarQuestions\n    contributors {\n      username\n      profileUrl\n      avatarUrl\n      __typename\n    }\n    langToValidPlayground\n    topicTags {\n      name\n      slug\n      translatedName\n      __typename\n    }\n    companyTagStats\n    codeSnippets {\n      lang\n      langSlug\n      code\n      __typename\n    }\n    stats\n    hints\n    solution {\n      id\n      canSeeDetail\n      __typename\n    }\n    status\n    sampleTestCase\n    metaData\n    judgerAvailable\n    judgeType\n    mysqlSchemas\n    enableRunCode\n    enableTestMode\n    envInfo\n    libraryUrl\n    __typename\n  }\n}\n
+    """
+    body = {
+        "operationName": "questionData",
+        "variables": {
+            "titleSlug": slug
+        },
+        "query": query
+    }
+
+    url = "https://leetcode.com/graphql"
+    try:
+        response = requests.post(url, json=body)
+        response.raise_for_status()
+    except HTTPError as http_err:
+        print(f'HTTP error occurred: {http_err}')  # Python 3.6
+    except Exception as err:
+        print(f'Other error occurred: {err}')  # Python 3.6
+    else:
+        r_json = response.json()
+        return r_json["data"]["question"]
+
+
+def hostile_response():
+    return constants.HOSTILE_RESPONSE[randint(
+        0,
+        len(constants.HOSTILE_RESPONSE) - 1)]
+
+load_dotenv()
+bot.run(os.getenv('TOKEN'))
