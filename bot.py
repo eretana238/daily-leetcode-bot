@@ -5,53 +5,104 @@ from dotenv import load_dotenv
 import json
 import os
 from random import randint
+import re
 import requests
 from requests.exceptions import HTTPError
 import time
 
 import constants
 
-bot = commands.Bot(command_prefix='lc ')
+bot = commands.Bot(command_prefix='lc ', description='A simple discord bot that enslaves your life with leetcode')
 
 info = list()
 t = ''
+db_file = 'db.json'
 stop_posting = False
-
+data = list()
 
 @bot.event
 async def on_ready():
     global info
+    global data
     res = requests.get('https://leetcode.com/api/problems/algorithms/')
     info = res.json()['stat_status_pairs']
-    print('Ready')
 
+    with open(db_file, 'r') as f:
+        data = json.load(f)
+        # create database with new data
+        if not 'guilds' in data:
+            data['guilds'] = list()
+            for i in range(len(bot.guilds)):
+                guild = create_guild_json(
+                    bot.guilds[i].name, bot.guilds[i].id, False, list(), 0)
+                data['guilds'].append(guild)
+            update_db(db_file, data)
+
+        # lacking one or more guilds, updates database with new guild
+        if len(data['guilds']) != len(bot.guilds):
+            for guild in bot.guilds:
+                is_new_guild = True
+                for db_guild in data['guilds']:
+                    if guild.name == db_guild['name']:
+                        is_new_guild = False
+                if is_new_guild:
+                    data['guilds'].append(create_guild_json(guild.name, guild.id, False, list(), 0))
+            update_db(db_file, data)
+        
+    print('ready')
+
+
+@bot.event
+async def on_disconnect():
+    global data
+    for guild in data['guilds']:
+        guild['isPosting'] = False
+    update_db(db_file, data)
+    print('bot disconnected')
 
 @bot.command()
 async def stop(ctx):
-    if 'daily_post_time' not in db.keys():
+    global data
+    guild = get_guild(ctx.guild.id)
+    if guild['isPosting']:
+        guild['isPosting'] = False
+    else:
         await ctx.send('Mmmm...there\'s nothing to stop')
         return
+        
     global stop_posting
     stop_posting = True
+    update_db(db_file, data)
+    await ctx.send('Stopped daily posting!')
 
 
 @bot.command()
 async def reset(ctx):
-    if 'daily_post_time' not in db.keys():
-        await ctx.send('There\'s nothing to reset')
-        return
+    global data
+    guild = get_guild(ctx.guild.id)
+    if guild['id'] == ctx.guild.id:
+        guild['schedules'] = list()
+        guild['isPosting'] = False
     global stop_posting
     stop_posting = True
-    del db['daily_post_time']
+    update_db(db_file, data)
+    await ctx.send('Reset daily posting!')
 
 
 @bot.command()
 async def resume(ctx):
-    if 'daily_post_time' not in db.keys():
-        await ctx.send('There\'s no daily posting to resume. Use an **lc start** command instead')
-        return
-    await ctx.send('Resumed daily posting!')
-    await ctx.invoke(bot.get_command('start random'))
+    global data
+    guild = get_guild(ctx.guild.id)
+    if len(guild['schedules']) > 0 and not guild['isPosting']:
+        guild['isPosting'] = True
+        global stop_posting
+        stop_posting = False
+        await ctx.send('Resumed daily posting!')
+        update_db(db_file, data)
+        command = bot.get_command('start random')
+        await ctx.invoke(command, guild['schedules'][0])
+    else:
+        await ctx.send('No daily posting to resume or daily posting is already running.')
 
 
 @bot.group()
@@ -59,17 +110,22 @@ async def start(ctx):
     if ctx.invoked_subcommand is None:
         await ctx.send('Invalid start command. Example command **lc start random**')
 
-
 @start.command()
-async def random(ctx, t='12:00'):
+async def random(ctx, t="12:00"):
+    print(t)
     global stop_posting
     stop_posting = False
-    if t is not None:
-        print('starting to post problems')
-        if 'daily_post_time' not in db.keys():
-            db['daily_post_time'] = t
-        while not stop_posting:
-            await start_random(parse_time(db['daily_post_time']), ctx)
+    if t is None or not re.match('\d\d:\d\d', t):
+        await ctx.send('Invalid time format provided. Make sure to provide a 24-hour format.')
+        return
+    global data
+    guild = get_guild(ctx.guild.id)
+    guild['isPosting'] = True
+    if t not in guild['schedules']:
+        guild['schedules'].append(t)
+        update_db(db_file, data)
+    while not stop_posting:
+        await start_random(parse_time(t), ctx, guild)
 
 
 @bot.event
@@ -99,26 +155,20 @@ def random_problem(level):
             return problem
 
 
-async def start_random(t, message):
+async def start_random(t, message, db_guild):
     global stop_posting
+    global data
+    guild = get_guild(message.guild.id)
     while not stop_posting:
         gm_time = time.gmtime()
         if t[0] == gm_time[3] and t[1] == gm_time[4] and gm_time[5] == 0:
-            await message.channel.send('Daily coding practice %d!' % db['problem_counter'])
+            guild['problemCounter'] += 1
+            await message.channel.send('Daily coding practice %d!' % guild['problemCounter'])
             await choose_problem(message, 1)
             await choose_problem(message, 2)
             await choose_problem(message, 3)
-            db['problem_counter'] += 1
+            update_db(db_file, data)
         await asyncio.sleep(1)
-    print('stopped daily posting')
-    await message.channel.send('Stopped daily posting!')
-
-
-def get_problem_counter():
-    if 'daily_counter' in db.keys():
-        counter = int(db['daily_counter'])
-        counter += 1
-        db['daily_counter'] = counter
 
 
 async def choose_problem(message, level):
@@ -155,7 +205,21 @@ async def choose_problem(message, level):
 
 def get_quest_info(slug):
     query = """
-    query questionData($titleSlug: String!) {\n  question(titleSlug: $titleSlug) {\n    questionId\n    questionFrontendId\n    boundTopicId\n    title\n    titleSlug\n    content\n    translatedTitle\n    translatedContent\n    isPaidOnly\n    difficulty\n    likes\n    dislikes\n    isLiked\n    similarQuestions\n    contributors {\n      username\n      profileUrl\n      avatarUrl\n      __typename\n    }\n    langToValidPlayground\n    topicTags {\n      name\n      slug\n      translatedName\n      __typename\n    }\n    companyTagStats\n    codeSnippets {\n      lang\n      langSlug\n      code\n      __typename\n    }\n    stats\n    hints\n    solution {\n      id\n      canSeeDetail\n      __typename\n    }\n    status\n    sampleTestCase\n    metaData\n    judgerAvailable\n    judgeType\n    mysqlSchemas\n    enableRunCode\n    enableTestMode\n    envInfo\n    libraryUrl\n    __typename\n  }\n}\n
+    query questionData($titleSlug: String!) {\n
+        question(titleSlug: $titleSlug) {\n
+            questionId\n    
+            questionFrontendId\n    
+            title\n    
+            titleSlug\n    
+            content\n    
+            isPaidOnly\n    
+            difficulty\n    
+            likes\n    
+            dislikes\n    
+            isLiked\n    
+            similarQuestions\n     
+        }\n
+    }\n
     """
     body = {
         "operationName": "questionData",
@@ -183,5 +247,19 @@ def hostile_response():
         0,
         len(constants.HOSTILE_RESPONSE) - 1)]
 
+def update_db(name: str, data: dict):
+    with open(name, 'w') as f:
+        json.dump(data, f, indent=4, sort_keys=True)
+
+
+def create_guild_json(name: str, id: int, isPosting: bool, schedules: list, counter: int):
+    return {'name': name, 'id': id, 'isPosting': isPosting, 'schedules': schedules, 'problemcounter': counter}
+
+def get_guild(id: int):
+    global data
+    for guild in data['guilds']:
+        if guild['id'] == id:
+            return guild
+        
 load_dotenv()
 bot.run(os.getenv('TOKEN'))
