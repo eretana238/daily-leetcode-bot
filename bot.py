@@ -20,6 +20,9 @@ db_file = 'db.json'
 stop_posting = False
 data = list()
 
+'''
+Prepares requests from the leetcode api
+'''
 @bot.event
 async def on_ready():
     global info
@@ -52,6 +55,9 @@ async def on_ready():
     print('ready')
 
 
+'''
+Saves all of the data before the bot can be disconnected
+'''
 @bot.event
 async def on_disconnect():
     global data
@@ -60,6 +66,11 @@ async def on_disconnect():
     update_db(db_file, data)
     print('bot disconnected')
 
+'''
+Stops the daily posting of leetcode problems. Might be useful when deciding to stop it on an important day or holiday
+parameters:
+    ctx: discord channel context
+'''
 @bot.command()
 async def stop(ctx):
     global data
@@ -75,7 +86,11 @@ async def stop(ctx):
     update_db(db_file, data)
     await ctx.send('Stopped daily posting!')
 
-
+'''
+Resets all daily posting scheules of leetcode problems. 
+parameters:
+    ctx: discord channel context
+'''
 @bot.command()
 async def reset(ctx):
     global data
@@ -88,7 +103,11 @@ async def reset(ctx):
     update_db(db_file, data)
     await ctx.send('Reset daily posting!')
 
-
+'''
+Resumes posting schedule
+parameters:
+    ctx: discord channel context
+'''
 @bot.command()
 async def resume(ctx):
     global data
@@ -104,12 +123,22 @@ async def resume(ctx):
     else:
         await ctx.send('No daily posting to resume or daily posting is already running.')
 
-
+'''
+Base command to start posting a leetcode problem
+parameters:
+    ctx: discord channel context
+'''
 @bot.group()
 async def start(ctx):
     if ctx.invoked_subcommand is None:
         await ctx.send('Invalid start command. Example command **lc start random**')
 
+'''
+Subsequent command to start. Process starts posting random leetcode problems given t
+parameters: 
+    ctx: discord channel context
+    t: defines scheduled posting time
+'''
 @start.command()
 async def random(ctx, t="12:00"):
     print(t)
@@ -127,7 +156,11 @@ async def random(ctx, t="12:00"):
     while not stop_posting:
         await start_random(parse_time(t), ctx, guild)
 
-
+'''
+Is triggered when sending a message in guild discord channel
+parameters:
+    message: discord channel message context
+'''
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
@@ -140,21 +173,35 @@ async def on_message(message):
         else:
             await message.channel.send(hostile_response())
 
-
+'''
+Parses string time to array
+parameters:
+    t: time blah
+'''
 def parse_time(t):
     if ':' not in t:
         return None
     ti = t.split(':')
     return (int(ti[0]) + 7) % 24, int(ti[1])
 
-
+'''
+Picks random problem from list of leetcode problems
+parameters:
+    level: represents level of difficulty of the problem that is going to be picked
+'''
 def random_problem(level):
     while True:
         problem = info[randint(0, len(info) - 1)]
         if not problem['paid_only'] and problem['difficulty']['level'] == level:
             return problem
 
-
+'''
+Starts the loop of posting at the scheduled time. Calls 3 different problems with different levels to be posted.
+parameters:
+    t: scheduled time to post
+    message: discord channel message context
+    db_guild: database stored discord guild data
+'''
 async def start_random(t, message, db_guild):
     global stop_posting
     global data
@@ -170,7 +217,12 @@ async def start_random(t, message, db_guild):
             update_db(db_file, data)
         await asyncio.sleep(1)
 
-
+'''
+Picks random problem and posts in discord channel
+parameters:
+    message: discord channel message context
+    level: 
+'''
 async def choose_problem(message, level):
     while True:
         problem = random_problem(level)
@@ -202,7 +254,13 @@ async def choose_problem(message, level):
             await message.channel.send(embed=embedVar)
             break
 
-
+'''
+Gets additional data using graphql request
+parameters:
+    slug: represents the question_slug from leetcode api
+return:
+    r_json: additional data from leetcode api in json format
+'''
 def get_quest_info(slug):
     query = """
     query questionData($titleSlug: String!) {\n
@@ -241,20 +299,34 @@ def get_quest_info(slug):
         r_json = response.json()
         return r_json["data"]["question"]
 
-
+'''
+Insults user with phrases like "no u" 
+return: 
+    randomly picked roast
+'''
 def hostile_response():
     return constants.HOSTILE_RESPONSE[randint(
         0,
         len(constants.HOSTILE_RESPONSE) - 1)]
 
+'''
+Updates database with newly created data such as schedules and newly added guilds
+'''
 def update_db(name: str, data: dict):
     with open(name, 'w') as f:
         json.dump(data, f, indent=4, sort_keys=True)
 
-
+'''
+Helps fill database with guild info when including a new guild
+return:
+return 
+'''
 def create_guild_json(name: str, id: int, isPosting: bool, schedules: list, counter: int):
     return {'name': name, 'id': id, 'isPosting': isPosting, 'schedules': schedules, 'problemcounter': counter}
 
+'''
+Gets guild information
+'''
 def get_guild(id: int):
     global data
     for guild in data['guilds']:
